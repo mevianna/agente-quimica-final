@@ -18,14 +18,25 @@ class QuantumChemAgent:
     """A small stateful agent: messages persist for the lifetime of this object."""
 
     def __init__(self) -> None:
-        self.backend = os.getenv("LLM_BACKEND", "ollama").lower()
+        self.backend = os.getenv("LLM_BACKEND", "gemini").lower()
         self.history: list[dict[str, Any]] = []
-        if self.backend == "ollama":
+        if self.backend == "gemini":
+            self._init_gemini()
+        elif self.backend == "ollama":
             self._init_ollama()
         elif self.backend == "openai":
             self._init_openai()
         else:
-            raise RuntimeError("LLM_BACKEND deve ser 'ollama' ou 'openai'.")
+            raise RuntimeError("LLM_BACKEND deve ser 'gemini', 'ollama' ou 'openai'.")
+
+    def _init_gemini(self) -> None:
+        try:
+            from google import genai  # pylint: disable=import-outside-toplevel
+        except ImportError as exc:
+            raise RuntimeError("Pacote 'google-genai' ausente. Execute: pip install -e .") from exc
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError("GEMINI_API_KEY não configurada. Crie uma chave no Google AI Studio e preencha .env.")
+        self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     def _init_openai(self) -> None:
         try:
@@ -66,6 +77,24 @@ class QuantumChemAgent:
         self.history.append({"role": "assistant", "content": answer})
         return answer
 
+    def _reply_gemini(self, user_text: str) -> str:
+        """Use Gemini with automatic execution of the local chemistry functions."""
+        from google.genai import types  # pylint: disable=import-outside-toplevel
+
+        self.history.append({"role": "user", "parts": [{"text": user_text}]})
+        config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            tools=[mapping_example, molecular_hamiltonian],
+        )
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        try:
+            response = self.client.models.generate_content(model=model, contents=self.history, config=config)
+        except Exception as exc:
+            raise RuntimeError(f"Não foi possível consultar Gemini. Verifique a chave e a conexão. Detalhe: {exc}") from exc
+        answer = response.text
+        self.history.append({"role": "model", "parts": [{"text": answer}]})
+        return answer
+
     def _reply_ollama(self, user_text: str) -> str:
         """Use Ollama's local chat endpoint, including local tool calls."""
         self.history.append({"role": "user", "content": user_text})
@@ -89,4 +118,6 @@ class QuantumChemAgent:
         return answer
 
     def reply(self, user_text: str) -> str:
+        if self.backend == "gemini":
+            return self._reply_gemini(user_text)
         return self._reply_ollama(user_text) if self.backend == "ollama" else self._reply_openai(user_text)

@@ -9,6 +9,7 @@ description = "Terminal LLM agent for quantum-chemistry calculations with Ket"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "google-genai>=1.0.0",
     "openai>=1.0.0",
     "ollama>=0.6.0",
     "python-dotenv>=1.0.0",

@@ -1,6 +1,6 @@
 # Quantum Chemistry Agent
 
-Agente de linha de comando que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. A primeira versão não tem interface gráfica: ela mantém o contexto da conversa, usa um modelo LLM local e disponibiliza ferramentas para consultar mapeamentos fermiônico→qubit e construir Hamiltonianos moleculares.
+Agente de linha de comando que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. A primeira versão não tem interface gráfica: ela mantém o contexto da conversa, usa um modelo LLM e disponibiliza ferramentas para consultar mapeamentos fermiônico→qubit e construir Hamiltonianos moleculares.
 
 ## Estrutura
 
@@ -11,7 +11,8 @@ Agente de linha de comando que conversa em linguagem natural e usa as rotinas de
 ## Requisitos
 
 - Python 3.10 ou superior.
-- Por padrão: [Ollama](https://ollama.com/download) instalado e o modelo local `qwen3:4b` baixado. Não exige chave nem créditos.
+- Por padrão: uma chave gratuita do [Google AI Studio](https://aistudio.google.com/app/apikey) para Gemini API.
+- Alternativamente: [Ollama](https://ollama.com/download) instalado e o modelo local `qwen3:4b` baixado. Não exige chave, mas requer espaço em disco.
 - Alternativamente: uma chave da API da OpenAI.
 - Para gerar Hamiltonianos a partir de uma molécula: PySCF em ambiente Linux/WSL2. O PySCF não possui suporte nativo para Windows.
 
@@ -24,13 +25,13 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-Baixe o Ollama para Windows e, em um novo Prompt de Comando, execute:
+Crie uma chave no Google AI Studio e edite `.env`:
 
-```bat
-ollama pull qwen3:4b
+```text
+GEMINI_API_KEY=sua_chave_aqui
 ```
 
-O arquivo `.env` já seleciona essa opção local. Nunca publique `.env`, especialmente se você decidir acrescentar uma chave OpenAI.
+O Gemini 2.5 Flash oferece chamadas de função e está disponível na camada gratuita com limites de uso. Nunca publique `.env`.
 
 ## Executar
 
@@ -48,7 +49,7 @@ python -m quantum_chem_agent
 
 Digite `sair` para encerrar. O agente mantém as mensagens anteriores durante a sessão.
 
-Para usar OpenAI no lugar do Ollama, ajuste `.env` para `LLM_BACKEND=openai` e preencha `OPENAI_API_KEY`.
+Para usar Ollama, ajuste `.env` para `LLM_BACKEND=ollama`, instale o Ollama e execute `ollama pull qwen3:4b`. Para OpenAI, ajuste para `LLM_BACKEND=openai` e preencha `OPENAI_API_KEY`.
 
 ## PySCF no WSL2
 
