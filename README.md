@@ -31,7 +31,7 @@ Crie uma chave no Google AI Studio e edite `.env`:
 GEMINI_API_KEY=sua_chave_aqui
 ```
 
-O Gemini 2.5 Flash oferece chamadas de função e está disponível na camada gratuita com limites de uso. Nunca publique `.env`.
+O Gemini 3.6 Flash oferece chamadas de função e está disponível na camada gratuita com limites de uso. Nunca publique `.env`.
 
 ## Executar
 

@@ -32,11 +32,19 @@ class QuantumChemAgent:
     def _init_gemini(self) -> None:
         try:
             from google import genai  # pylint: disable=import-outside-toplevel
+            from google.genai import types  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             raise RuntimeError("Pacote 'google-genai' ausente. Execute: pip install -e .") from exc
         if not os.getenv("GEMINI_API_KEY"):
             raise RuntimeError("GEMINI_API_KEY não configurada. Crie uma chave no Google AI Studio e preencha .env.")
         self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        self.chat = self.client.chats.create(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[mapping_example, molecular_hamiltonian],
+            ),
+        )
 
     def _init_openai(self) -> None:
         try:
@@ -79,20 +87,11 @@ class QuantumChemAgent:
 
     def _reply_gemini(self, user_text: str) -> str:
         """Use Gemini with automatic execution of the local chemistry functions."""
-        from google.genai import types  # pylint: disable=import-outside-toplevel
-
-        self.history.append({"role": "user", "parts": [{"text": user_text}]})
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[mapping_example, molecular_hamiltonian],
-        )
-        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         try:
-            response = self.client.models.generate_content(model=model, contents=self.history, config=config)
+            response = self.chat.send_message(user_text)
         except Exception as exc:
             raise RuntimeError(f"Não foi possível consultar Gemini. Verifique a chave e a conexão. Detalhe: {exc}") from exc
         answer = response.text
-        self.history.append({"role": "model", "parts": [{"text": answer}]})
         return answer
 
     def _reply_ollama(self, user_text: str) -> str:
