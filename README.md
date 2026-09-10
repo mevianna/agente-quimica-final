@@ -1,6 +1,6 @@
 # Quantum Chemistry Agent
 
-Agente de linha de comando que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. A primeira versão não tem interface gráfica: ela mantém o contexto da conversa, chama um modelo LLM pela API e disponibiliza ferramentas para consultar mapeamentos fermiônico→qubit e construir Hamiltonianos moleculares.
+Agente de linha de comando que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. A primeira versão não tem interface gráfica: ela mantém o contexto da conversa, usa um modelo LLM local e disponibiliza ferramentas para consultar mapeamentos fermiônico→qubit e construir Hamiltonianos moleculares.
 
 ## Estrutura
 
@@ -11,7 +11,8 @@ Agente de linha de comando que conversa em linguagem natural e usa as rotinas de
 ## Requisitos
 
 - Python 3.10 ou superior.
-- Uma chave da API da OpenAI para a conversa com LLM.
+- Por padrão: [Ollama](https://ollama.com/download) instalado e o modelo local `qwen3:4b` baixado. Não exige chave nem créditos.
+- Alternativamente: uma chave da API da OpenAI.
 - Para gerar Hamiltonianos a partir de uma molécula: PySCF em ambiente Linux/WSL2. O PySCF não possui suporte nativo para Windows.
 
 ## Instalação no Windows (modo inicial)
@@ -23,7 +24,13 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-Edite `.env` e preencha `OPENAI_API_KEY`. Nunca publique esse arquivo.
+Baixe o Ollama para Windows e, em um novo Prompt de Comando, execute:
+
+```bat
+ollama pull qwen3:4b
+```
+
+O arquivo `.env` já seleciona essa opção local. Nunca publique `.env`, especialmente se você decidir acrescentar uma chave OpenAI.
 
 ## Executar
 
@@ -40,6 +47,8 @@ python -m quantum_chem_agent
 ```
 
 Digite `sair` para encerrar. O agente mantém as mensagens anteriores durante a sessão.
+
+Para usar OpenAI no lugar do Ollama, ajuste `.env` para `LLM_BACKEND=openai` e preencha `OPENAI_API_KEY`.
 
 ## PySCF no WSL2
 
