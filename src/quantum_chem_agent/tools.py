@@ -59,6 +59,8 @@ def mapping_example(orbital: int, action: str, mapping: str = "jordan_wigner") -
     operator = Fermion({(0, orbital, "a"): action})
     hamiltonian = mappers[mapping](operator, qubits)
     return {
+        "calculation_status": "completed",
+        "calculation_engine": "local Ket library",
         "input": f"a_{orbital}{'†' if action == '+' else ''}",
         "mapping": mapping,
         "qubits_required": orbital + 1,

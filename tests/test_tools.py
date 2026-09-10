@@ -19,5 +19,7 @@ def test_tool_errors_are_json():
 
 def test_explicit_jordan_wigner_creation_tool():
     result = jordan_wigner_creation(3)
+    assert result["calculation_status"] == "completed"
+    assert result["calculation_engine"] == "local Ket library"
     assert result["qubits_required"] == 4
     assert len(result["pauli_terms"]) == 2
