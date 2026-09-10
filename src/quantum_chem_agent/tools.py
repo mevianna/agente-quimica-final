@@ -30,7 +30,13 @@ def _serialize_hamiltonian(hamiltonian: Any) -> list[dict[str, Any]]:
 
 
 def mapping_example(orbital: int, action: str, mapping: str = "jordan_wigner") -> dict[str, Any]:
-    """Map one creation/annihilation fermionic operator to Pauli terms."""
+    """Map one fermionic creation or annihilation operator to Pauli terms.
+
+    Args:
+        orbital: Zero-based orbital index.
+        action: Use '+' for creation and '-' for annihilation.
+        mapping: One of jordan_wigner, parity, or bravyi_kitaev.
+    """
     if orbital < 0:
         raise ValueError("orbital must be non-negative")
     if action not in {"+", "-"}:
@@ -58,6 +64,18 @@ def mapping_example(orbital: int, action: str, mapping: str = "jordan_wigner") -
         "qubits_required": orbital + 1,
         "pauli_terms": _serialize_hamiltonian(hamiltonian),
     }
+
+
+def jordan_wigner_creation(orbital: int) -> dict[str, Any]:
+    """Calculate the Ket Jordan-Wigner mapping for a fermionic creation operator.
+
+    Args:
+        orbital: Zero-based orbital index of the creation operator.
+
+    Returns:
+        The exact Pauli terms and coefficients computed by Ket.
+    """
+    return mapping_example(orbital=orbital, action="+", mapping="jordan_wigner")
 
 
 def molecular_hamiltonian(

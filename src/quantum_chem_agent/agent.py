@@ -6,7 +6,7 @@ import os
 import json
 from typing import Any
 
-from .tools import TOOL_DEFINITIONS, call_tool, mapping_example, molecular_hamiltonian
+from .tools import TOOL_DEFINITIONS, call_tool, jordan_wigner_creation, mapping_example, molecular_hamiltonian
 
 SYSTEM_PROMPT = """Você é um assistente didático de química quântica. Responda em português,
 de forma clara e cientificamente cuidadosa. Para resultados numéricos ou mapeamentos,
@@ -42,7 +42,7 @@ class QuantumChemAgent:
             model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
-                tools=[mapping_example, molecular_hamiltonian],
+                tools=[jordan_wigner_creation, molecular_hamiltonian],
             ),
         )
 
