@@ -1,0 +1,614 @@
+"""Public UCCSD construction and circuit interface."""
+
+from dataclasses import dataclass
+from typing import Any
+
+import pennylane as qml
+from pennylane.fermi import from_string
+
+from ..mapping._bravyi_kitaev import map_bk_operator, map_bks_operator
+
+
+
+@dataclass(frozen=True)
+class UCCSDResult:
+    """Store mapped UCCSD generators and construction statistics."""
+
+    mapping: str
+    operators: tuple[Any, ...]
+    n_singles: int
+    n_doubles: int
+    n_initial_generators: int
+    n_symmetry_discarded: int
+    n_zero_discarded: int
+
+    def __len__(self):
+        return len(self.operators)
+
+    def __iter__(self):
+        return iter(self.operators)
+
+    def __getitem__(self, index):
+        return self.operators[index]
+
+
+@dataclass(frozen=True)
+class UCCSDResources:
+    """Store estimated resource counts for the UCCSD circuit."""
+    
+    n_qubits: int
+    n_generators: int
+    total_pauli_terms: int
+    average_terms_per_generator: float
+    average_pauli_weight: float
+    maximum_pauli_weight: int
+    pauli_rotations: int
+    cnot: int
+    hadamard: int
+    rx: int
+    ry: int
+    rz: int
+    total_gates: int
+    depth: int
+
+
+
+def build_fermionic_generators(
+    singles: list[tuple[int, int]], 
+    doubles: list[tuple[int, int, int, int]]
+):
+    """Build anti-Hermitian fermionic excitation generators.
+
+    These generators correspond to the fermionic excitation operators
+    ``T - T^dagger`` used in the UCCSD ansatz before qubit mapping.
+
+    Parameters
+    ----------
+    singles : list[tuple[int, int]]
+        Single-excitation pairs ``(occupied, virtual)``.
+    doubles : list[tuple[int, int, int, int]]
+        Double-excitation tuples
+        ``(occupied_1, occupied_2, virtual_1, virtual_2)``.
+
+    Returns
+    -------
+    list
+        A list of anti-Hermitian fermionic excitation generators.
+    """
+    # Start with an empty generator pool.
+    generators = []
+    
+    # Build the single-excitation generators.
+    for occupied, virtual in singles:
+        excitation = from_string(f"{virtual}+ {occupied}-")
+        generators.append(excitation - excitation.adjoint())
+    
+    # Build the double-excitation generators.
+    for occupied_1, occupied_2, virtual_1, virtual_2 in doubles:
+        excitation = from_string(
+            f"{virtual_2}+ {virtual_1}+ "
+            f"{occupied_2}- {occupied_1}-"
+        )
+        generators.append(excitation - excitation.adjoint())
+
+    return generators
+
+
+def _prepare_mapped_generator(qubit_generator):
+    """Convert a mapped anti-Hermitian generator into a Hermitian operator.
+
+    The circuit uses the Hermitian operator ``A = iG`` so that the unitary
+    is implemented as ``exp(-i theta A)``. This function converts the mapped
+    generator (eg. build_fermionic_generators) into a Pauli-operator form ready to be inserted into the circuit.
+
+    Parameters
+    ----------
+    qubit_generator
+        A generator already mapped to qubits.
+
+    Returns
+    -------
+    Any or None
+        A Hermitian generator ready for circuit application, or ``None`` if
+        the operator simplifies to zero.
+    """
+    # Convert the anti-Hermitian generator into a Hermitian one.
+    hermitian_generator = qml.simplify(1j * qubit_generator)
+   
+    # Express the result as a Pauli sentence and simplify it.
+    pauli_sentence = qml.pauli.pauli_sentence(hermitian_generator)
+    pauli_sentence.simplify()
+
+    # If the operator vanishes, discard it.
+    if len(pauli_sentence) == 0:
+        return None
+
+    # Extract the operator and remap wires to integer labels.
+    generator = pauli_sentence.operation()
+    wire_map = {wire: int(wire) for wire in generator.wires}
+    return qml.map_wires(generator, wire_map)
+
+
+def _commutes_with_symmetries(
+    operator: qml.operation.Operation, 
+    symmetries: list) -> bool:
+    
+    """Return ``True`` when an operator commutes with every Z2 symmetry.
+
+    Parameters
+    ----------
+    operator
+        The operator to test.
+    symmetries
+        The symmetry generators from the tapered Hamiltonian.
+
+    Returns
+    -------
+    bool
+        ``True`` if the operator commutes with all symmetries.
+    """
+
+    # Convert the operator to a Pauli sentence.
+    operator_sentence = qml.pauli.pauli_sentence(operator)
+
+    # Check commutation with each symmetry generator.
+    for symmetry in symmetries:
+        symmetry_sentence = qml.pauli.pauli_sentence(symmetry)
+
+        # Calculate [operator, symmetry].
+        commutator = operator_sentence.commutator(symmetry_sentence)
+
+        commutator.simplify()
+        # A nonzero commutator means the generator breaks the symmetry.
+        if len(commutator) != 0:
+            return False
+
+    return True
+
+def _taper_generator(
+    generator: qml.operation.Operation, 
+    hamiltonian_result: Any):
+   
+    """Apply the Hamiltonian's Z2 tapering to one UCCSD generator.
+
+    Parameters
+    ----------
+    generator
+        A mapped Hermitian generator.
+    hamiltonian_result
+        The Hamiltonian result object containing the tapering data.
+
+    Returns
+    -------
+    Any or None
+        The tapered generator, or ``None`` if it is discarded.
+    """
+
+    # If no symmetry generators were found, nothing to taper.
+    if len(hamiltonian_result.generators) == 0:
+        return generator
+
+    # Discard generators that do not preserve the selected symmetry sector.
+    if not _commutes_with_symmetries(generator, hamiltonian_result.generators):
+        return None
+
+   # Apply the same Clifford transformation used by the Hamiltonian.
+    paulix_ops = getattr(hamiltonian_result, "paulix_ops", ())
+    paulix_sector = getattr(hamiltonian_result, "paulix_sector", ())
+    
+    tapered_generator = qml.taper(generator, hamiltonian_result.generators, 
+                                  hamiltonian_result.paulix_ops, hamiltonian_result.paulix_sector)
+
+    tapered_generator = qml.simplify(tapered_generator)
+
+     # Remove any numerical zero terms left by tapering.
+    pauli_sentence = qml.pauli.pauli_sentence(tapered_generator)
+
+    pauli_sentence.simplify()
+
+    if len(pauli_sentence) == 0:
+        return None
+
+    return pauli_sentence.operation()
+
+
+def build_jw_uccsd_generator(
+    fermionic_generators: list, 
+    hamiltonian_result: Any) -> tuple[list, int, int]:
+
+    """Map UCCSD generators with Jordan-Wigner and optionally apply tapering.
+
+    Parameters
+    ----------
+    fermionic_generators
+        A list of fermionic excitation generators.
+    hamiltonian_result
+        The Hamiltonian result object carrying the mapping and symmetry data.
+
+    Returns
+    -------
+    tuple[list, int, int]
+        A tuple with the mapped operators, the number of generators discarded
+        by symmetry, and the number discarded because they simplify to zero.
+    """
+    # Select the mapping used by the Hamiltonian.
+    mapping = hamiltonian_result.mapping
+
+    if mapping not in {"JW", "JW-T"}:
+        raise ValueError("build_jw_uccsd_genarator supports only 'JW' and 'JW-T'.")
+
+    # Keep track of discarded generators.
+    operators = []
+    symmetry_discarded = 0
+    zero_discarded = 0
+    
+    # Map each fermionic generator to the qubit representation.
+    for fermionic_generator in fermionic_generators:
+        mapped_generator = qml.jordan_wigner(fermionic_generator)
+
+        # Prepare the mapped generator for circuit use.
+        generator = _prepare_mapped_generator(mapped_generator)
+
+        if generator is None:
+            zero_discarded += 1
+            continue
+
+        # For JW-T, apply symmetry tapering.
+        if mapping == "JW-T":
+            generator = _taper_generator(generator, hamiltonian_result)
+
+            if generator is None:
+                symmetry_discarded += 1
+                continue
+
+        operators.append(generator)
+
+    return (operators, symmetry_discarded, zero_discarded)
+
+
+
+def build_bk_uccsd_generator(
+    fermionic_generators: list, 
+    hamiltonian_result: Any) -> tuple[list, int, int]:
+    """"Map UCCSD generators with BK or BK-S.
+
+    Parameters
+    ----------
+    fermionic_generators
+        A list of fermionic excitation generators.
+    hamiltonian_result
+        The Hamiltonian result object carrying the mapping and qubit count.
+
+    Returns
+    -------
+    tuple[list, int, int]
+        A tuple with the mapped operators, the number of symmetry-discarded
+        generators, and the number discarded because they simplify to zero.
+    """
+    # Select the BK-based mapping.
+    mapping = hamiltonian_result.mapping
+
+    if mapping not in {"BK", "BK-S"}:
+        raise ValueError("_build_bk_uccsd_generator supports only 'BK' and 'BK-S'.")
+    # Track discarded generators.
+    operators = []
+    zero_discarded = 0
+    
+    # Map each fermionic generator to the BK or BK-S representation.
+    for fermionic_generator in fermionic_generators:
+        if mapping == "BK":
+            mapped_generator = map_bk_operator(fermionic_operator=fermionic_generator,
+                                               n_spin_orbitals=hamiltonian_result.n_spin_orbitals,
+                                               )
+        else:
+            mapped_generator = map_bks_operator(fermionic_operator=fermionic_generator,
+                                                n_spin_orbitals=hamiltonian_result.n_spin_orbitals,
+                                                n_electrons=hamiltonian_result.n_active_electrons,
+                                                )
+
+            if mapped_generator is None:
+                zero_discarded += 1
+                continue
+        
+        # Prepare the mapped generator for circuit use.             
+        generator = _prepare_mapped_generator(mapped_generator)
+
+        if generator is None:
+            zero_discarded += 1
+            continue
+
+        operators.append(generator)
+
+    return (operators, 0, zero_discarded)
+
+
+def build_uccsd_ansatz(hamiltonian_result, verbose: bool = False) -> UCCSDResult:
+    
+    """Build a mapped UCCSD ansatz from a molecular Hamiltonian result.
+
+    This function constructs the singles and doubles fermionic excitation
+    generators for the active-space problem and maps them to the qubit
+    representation defined by ``hamiltonian_result.mapping``. The generated
+    operators form the variational ansatz used by the VQE circuit.
+
+    Parameters
+    ----------
+    hamiltonian_result
+        A HamiltonianResult object with the selected mapping and qubit data.
+    verbose : bool, optional
+        If ``True``, print basic statistics about the constructed ansatz.
+
+    Returns
+    -------
+    UCCSDResult
+        An object containing the mapped UCCSD generators and statistics.
+    """
+    # Retrieve the selected mapping.
+    mapping = hamiltonian_result.mapping
+    
+    # Get the excitation list from the active-space size.
+    singles, doubles = qml.qchem.excitations(hamiltonian_result.n_active_electrons, hamiltonian_result.n_spin_orbitals)
+
+    # Build the fermionic excitation generators.
+    fermionic_generators = build_fermionic_generators(singles, doubles)
+
+     # Map the generators according to the selected qubit mapping.
+    if mapping in {"JW", "JW-T"}:
+        operators, symmetry_discarded, zero_discarded = build_jw_uccsd_generator(
+            fermionic_generators=fermionic_generators,
+            hamiltonian_result=hamiltonian_result,
+        )
+    elif mapping in {"BK", "BK-S"}:
+        operators, symmetry_discarded, zero_discarded = build_bk_uccsd_generator(
+            fermionic_generators=fermionic_generators,
+            hamiltonian_result=hamiltonian_result,
+        )
+    else:
+        raise ValueError(f"Unsupported mapping: {mapping}")
+    
+    # Package the result into a structured object.
+    result = UCCSDResult(
+        mapping=mapping,
+        operators=tuple(operators),
+        n_singles=len(singles),
+        n_doubles=len(doubles),
+        n_initial_generators=len(singles) + len(doubles),
+        n_symmetry_discarded=symmetry_discarded,
+        n_zero_discarded=zero_discarded,
+    )
+    # Optionally print summary information.
+    if verbose:
+        print(f"Mapping: {result.mapping}")
+        print(f"Single excitations: {result.n_singles}")
+        print(f"Double excitations: {result.n_doubles}")
+        print(f"Initial generators: {result.n_initial_generators}")
+        print(f"Final generators: {len(result)}")
+        print(f"Zero generators discarded: {result.n_zero_discarded}")
+
+    return result
+
+        
+def _count_uccsd_pauli_statistics(ansatz: UCCSDResult) -> dict[str, float | int]:
+    """Count Pauli-word statistics for the mapped UCCSD ansatz.
+
+    Parameters
+    ----------
+    ansatz : UCCSDResult
+        The ansatz whose generators will be analyzed.
+
+    Returns
+    -------
+    dict[str, float | int]
+        Statistics including the number of generators, total Pauli terms,
+        average terms per generator, average Pauli weight, and maximum
+        Pauli weight.
+    """
+    # Collect the Pauli words from all generators.
+    pauli_words = []
+
+    for generator in ansatz.operators:
+        pauli_words.extend(pauli_word for pauli_word, _ in _get_pauli_terms(generator))
+    
+    # Compute aggregate statistics.
+    n_generators = len(ansatz)
+    total_terms = len(pauli_words)
+    weights = [len(pauli_word) for pauli_word in pauli_words]
+
+    return {
+        "n_generators": n_generators,
+        "total_pauli_terms": total_terms,
+        "average_terms_per_generator": total_terms / n_generators if n_generators else 0.0,
+        "average_pauli_weight": sum(weights) / total_terms if total_terms else 0.0,
+        "maximum_pauli_weight": max(weights) if weights else 0,
+    }
+
+
+def _get_pauli_terms(generator, tolerance=1.0e-12):
+    """Return the nonzero, nonidentity Pauli terms of a Hermitian generator.
+
+    Parameters
+    ----------
+    generator
+        A Hermitian UCCSD generator.
+    tolerance : float, optional
+        Numerical threshold used to remove negligible coefficients.
+
+    Returns
+    -------
+    list[tuple[Any, float]]
+        A list of ``(pauli_word, coefficient)`` pairs.
+    """
+
+    # Convert the generator to a Pauli sentence.
+    pauli_sentence = qml.pauli.pauli_sentence(generator)
+    pauli_sentence.simplify()
+    
+    pauli_terms = []
+
+     # Extract all nonzero Pauli terms.
+    for pauli_word, coefficient in pauli_sentence.items():
+        value = complex(coefficient)
+
+        # Skip negligible or identity terms.
+        if abs(value) <= tolerance or len(pauli_word) == 0:
+            continue
+        
+        # Hermitian generators should have real coefficients.        
+        if abs(value.imag) > tolerance:
+            raise ValueError("A Hermitian UCCSD generator contains a complex coefficient.")
+
+        pauli_terms.append((pauli_word, value.real))
+
+    return pauli_terms
+
+
+def apply_pauli_generator(
+    theta: float, 
+    generator: qml.operation.Operation, 
+    trotter_steps: int):
+
+    """
+    Apply one UCCSD generator as a sequence of Pauli rotations.
+    
+    Each exponential is implemented with PennyLane's PauliRot operation:
+
+        PauliRot(phi, P) = exp(-i phi P / 2).
+
+    Therefore, the rotation angle passed to PauliRot is
+
+        phi = 2 theta c_j / r.
+
+    Identity terms are ignored because they contribute only a global phase.
+
+    Parameters
+    ----------
+    theta : float
+        Variational parameter associated with the generator.
+    generator
+        A Hermitian UCCSD generator.
+    trotter_steps : int, optional
+        Number of Trotter steps used to approximate the exponential.
+    Returns
+    -------
+    None
+        The function applies the generator to the active circuit.
+    """
+
+    # Obtain the already simplified, nonzero, and nonidentity terms.
+    pauli_terms = _get_pauli_terms(generator)
+
+    # Repeat the ordered product once for each Trotter step.
+    
+    for _ in range(trotter_steps):
+        for pauli_word, coefficient in pauli_terms:
+            value = complex(coefficient)
+
+            # A Hermitian generator must have real Pauli coefficients.
+            coefficient = value.real
+
+            # Skip identity terms.
+            if len(pauli_word) == 0:
+                continue
+
+            # Convert the Pauli word to a wire list and string.
+            term_wires = list(pauli_word.keys())
+            pauli_string = "".join(pauli_word[wire] for wire in term_wires)
+
+            # The rotation angle is chosen so that PauliRot reproduces
+            # the exponential of the Pauli term.
+            angle = (2.0 * coefficient * theta / trotter_steps)
+
+            qml.PauliRot(angle, pauli_string, wires=term_wires)
+
+
+def apply_uccsd(params, ansatz: UCCSDResult, trotter_steps: int = 1):
+    """Apply all UCCSD generators to the active circuit.
+
+    Parameters
+    ----------
+    params
+        Variational parameters, one for each generator.
+    ansatz : UCCSDResult
+        The mapped UCCSD ansatz.
+    trotter_steps : int, optional
+        Number of Trotter steps used for each generator.
+    """
+    # Ensure the number of parameters matches the number of generators.
+    if len(params) != len(ansatz.operators):
+        raise ValueError("The number of parameters must match the number of generators.")
+
+    # Apply each generator in order.
+    for theta, generator in zip(params, ansatz.operators, strict=True):
+        apply_pauli_generator(theta, generator, trotter_steps)
+
+def get_uccsd_resources(
+    ansatz: UCCSDResult,
+    params,
+    n_qubits: int,
+    trotter_steps: int = 1,
+) -> UCCSDResources:
+    """Estimate the resource cost of the UCCSD circuit.
+
+    Parameters
+    ----------
+    ansatz : UCCSDResult
+        The mapped UCCSD ansatz.
+    params
+        Variational parameters for the ansatz.
+    n_qubits : int
+        Number of qubits used by the circuit.
+    trotter_steps : int, optional
+        Number of Trotter steps used for each generator.
+
+    Returns
+    -------
+    UCCSDResources
+        Resource estimates for the generated circuit.
+    """
+    # Collect Pauli-level statistics from the ansatz.
+    pauli_statistics = _count_uccsd_pauli_statistics(ansatz)
+
+    # Create a temporary device for resource estimation.
+    resource_device = qml.device("default.qubit", wires=n_qubits)
+
+    @qml.transforms.decompose(
+        gate_set={qml.Hadamard, qml.RX, qml.RY, qml.RZ, qml.CNOT}
+    )
+    @qml.qnode(resource_device, interface="jax")
+    def resource_circuit(resource_params):
+        # Apply the ansatz to the resource-estimation circuit.
+        apply_uccsd(
+            params=resource_params,
+            ansatz=ansatz,
+            trotter_steps=trotter_steps,
+        )
+        return qml.state()
+
+    # Obtain circuit specifications and resource usage.
+    circuit_specs = qml.specs(
+        resource_circuit,
+        level="user",
+        compute_depth=True,
+    )(params)
+
+    resources = circuit_specs.resources
+    gate_types = resources.gate_types
+
+    return UCCSDResources(
+        n_qubits=n_qubits,
+        n_generators=int(pauli_statistics["n_generators"]),
+        total_pauli_terms=int(pauli_statistics["total_pauli_terms"]),
+        average_terms_per_generator=float(
+            pauli_statistics["average_terms_per_generator"]
+        ),
+        average_pauli_weight=float(pauli_statistics["average_pauli_weight"]),
+        maximum_pauli_weight=int(pauli_statistics["maximum_pauli_weight"]),
+        pauli_rotations=int(pauli_statistics["total_pauli_terms"]) * trotter_steps,
+        cnot=gate_types.get("CNOT", 0),
+        hadamard=gate_types.get("Hadamard", 0),
+        rx=gate_types.get("RX", 0),
+        ry=gate_types.get("RY", 0),
+        rz=gate_types.get("RZ", 0),
+        total_gates=resources.num_gates,
+        depth=resources.depth,
+    )

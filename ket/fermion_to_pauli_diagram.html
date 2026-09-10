@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Esquema Visual: De Férmions para Strings de Pauli (Jordan-Wigner)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&family=Inter:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg-dark: #0d1117;
+    --card-bg: #161b22;
+    --card-border: #30363d;
+    --text-main: #f0f6fc;
+    --text-muted: #8b949e;
+    
+    --color-z: #f59e0b; /* Amarelo/Laranja para Paridade Z */
+    --color-z-bg: rgba(245, 158, 11, 0.15);
+    --color-z-border: #f59e0b;
+    
+    --color-op: #06b6d4; /* Ciano para Operador Local X/Y */
+    --color-op-bg: rgba(6, 182, 212, 0.15);
+    --color-op-border: #06b6d4;
+    
+    --color-i: #64748b; /* Cinza para Identidade I */
+    --color-i-bg: rgba(100, 116, 139, 0.1);
+    --color-i-border: #475569;
+
+    --color-accent: #a855f7; /* Roxo para Férmions */
+    --color-green: #10b981;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 30px;
+  }
+
+  .slide-container {
+    width: 1100px;
+    background: radial-gradient(circle at 20% 20%, #1e1b4b 0%, #0d1117 70%);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 40px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slide-container::before {
+    content: "";
+    position: absolute;
+    top: -50px;
+    right: -50px;
+    width: 250px;
+    height: 250px;
+    background: radial-gradient(circle, rgba(168, 85, 247, 0.2) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 35px;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 6px 16px;
+    background: rgba(168, 85, 247, 0.2);
+    border: 1px solid var(--color-accent);
+    color: #d8b4fe;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #ffffff 30%, #a855f7 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  p.subtitle {
+    color: var(--text-muted);
+    font-size: 16px;
+  }
+
+  /* Fórmula Principal */
+  .formula-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 30px;
+    text-align: center;
+  }
+
+  .formula-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 15px;
+  }
+
+  .math-expression {
+    font-family: 'Fira Code', monospace;
+    font-size: 26px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .math-fermion {
+    color: #c084fc;
+    background: rgba(192, 132, 252, 0.1);
+    padding: 4px 12px;
+    border-radius: 8px;
+    border: 1px dashed #a855f7;
+  }
+
+  .math-z {
+    color: #fbbf24;
+    background: var(--color-z-bg);
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-z);
+  }
+
+  .math-op {
+    color: #38bdf8;
+    background: var(--color-op-bg);
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-op);
+  }
+
+  .math-i {
+    color: #94a3b8;
+    background: var(--color-i-bg);
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-i-border);
+  }
+
+  /* Anatomia dos Qubits / Fita Visual */
+  .anatomy-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 30px;
+  }
+
+  .qubit-card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 18px;
+    border: 2px solid var(--card-border);
+    transition: transform 0.2s, border-color 0.2s;
+    position: relative;
+  }
+
+  .qubit-card.z-stage {
+    border-color: var(--color-z-border);
+    background: linear-gradient(180deg, var(--color-z-bg) 0%, var(--card-bg) 100%);
+  }
+
+  .qubit-card.op-stage {
+    border-color: var(--color-op-border);
+    background: linear-gradient(180deg, var(--color-op-bg) 0%, var(--card-bg) 100%);
+  }
+
+  .qubit-card.i-stage {
+    border-color: var(--color-i-border);
+    background: linear-gradient(180deg, var(--color-i-bg) 0%, var(--card-bg) 100%);
+  }
+
+  .qubit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .qubit-id {
+    font-family: 'Fira Code', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-muted);
+  }
+
+  .operator-badge {
+    font-family: 'Fira Code', monospace;
+    font-size: 20px;
+    font-weight: 800;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+  }
+
+  .qubit-card.z-stage .operator-badge {
+    background: var(--color-z);
+    color: #000;
+  }
+
+  .qubit-card.op-stage .operator-badge {
+    background: var(--color-op);
+    color: #000;
+  }
+
+  .qubit-card.i-stage .operator-badge {
+    background: #475569;
+    color: #fff;
+  }
+
+  .qubit-role {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .qubit-card.z-stage .qubit-role { color: #f59e0b; }
+  .qubit-card.op-stage .qubit-role { color: #06b6d4; }
+  .qubit-card.i-stage .qubit-role { color: #94a3b8; }
+
+  .qubit-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  /* Exemplo Concreto Hopping */
+  .hopping-box {
+    background: rgba(16, 185, 129, 0.05);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 12px;
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .hopping-info h4 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #34d399;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hopping-info p {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .hopping-result {
+    font-family: 'Fira Code', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    background: #0f172a;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    white-space: nowrap;
+  }
+
+  .highlight-x { color: #38bdf8; }
+  .highlight-z { color: #fbbf24; }
+  .highlight-y { color: #f43f5e; }
+</style>
+</head>
+<body>
+
+<div class="slide-container">
+  
+  <!-- Cabeçalho -->
+  <div class="header">
+    <div class="badge">Compilação Quântica • Jordan-Wigner</div>
+    <h1>De Operadores Fermiônicos para Strings de Pauli</h1>
+    <p class="subtitle">Como a física dos elétrons é traduzida em matrizes que o processador quântico executa</p>
+  </div>
+
+  <!-- Cartão da Fórmula Geral -->
+  <div class="formula-card">
+    <div class="formula-title">A Estrutura da Transformação para o Orbital <i>j</i></div>
+    <div class="math-expression">
+      <span class="math-fermion">a<sub>j</sub><sup>†</sup></span>
+      <span>=</span>
+      <span class="math-z">Z<sub>0</sub> ⊗ ... ⊗ Z<sub>j-1</sub></span>
+      <span>⊗</span>
+      <span class="math-op">(X<sub>j</sub> - iY<sub>j</sub>) / 2</span>
+      <span>⊗</span>
+      <span class="math-i">I<sub>j+1</sub> ⊗ ... ⊗ I<sub>N-1</sub></span>
+    </div>
+  </div>
+
+  <!-- Anatomia em 4 Qubits (Exemplo: Operando no Qubit 2) -->
+  <div class="anatomy-grid">
+    
+    <!-- Qubit 0 -->
+    <div class="qubit-card z-stage">
+      <div class="qubit-header">
+        <span class="qubit-id">Qubit 0 (k &lt; j)</span>
+        <div class="operator-badge">Z</div>
+      </div>
+      <div class="qubit-role">Sensor de Paridade</div>
+      <div class="qubit-desc">Lê se há elétron antes para aplicar o sinal de troca (-1 se ímpar).</div>
+    </div>
+
+    <!-- Qubit 1 -->
+    <div class="qubit-card z-stage">
+      <div class="qubit-header">
+        <span class="qubit-id">Qubit 1 (k &lt; j)</span>
+        <div class="operator-badge">Z</div>
+      </div>
+      <div class="qubit-role">Sensor de Paridade</div>
+      <div class="qubit-desc">Continua a cadeia de contagem de elétrons anteriores (Z-String).</div>
+    </div>
+
+    <!-- Qubit 2 -->
+    <div class="qubit-card op-stage">
+      <div class="qubit-header">
+        <span class="qubit-id">Qubit 2 (k = j)</span>
+        <div class="operator-badge">X/Y</div>
+      </div>
+      <div class="qubit-role">Ação Local (Criar/Destruir)</div>
+      <div class="qubit-desc">Aplica a transição |0⟩ ↔ |1⟩ no orbital alvo através de (X ∓ iY)/2.</div>
+    </div>
+
+    <!-- Qubit 3 -->
+    <div class="qubit-card i-stage">
+      <div class="qubit-header">
+        <span class="qubit-id">Qubit 3 (k &gt; j)</span>
+        <div class="operator-badge">I</div>
+      </div>
+      <div class="qubit-role">Identidade (Neutro)</div>
+      <div class="qubit-desc">Orbitais posteriores não sofrem alteração de fase nem de ocupação.</div>
+    </div>
+
+  </div>
+
+  <!-- Bloco Hopping Prático -->
+  <div class="hopping-box">
+    <div class="hopping-info">
+      <h4>⚡ Exemplo Prático: Movimento do Elétron (Hopping a<sub>0</sub><sup>†</sup> a<sub>2</sub>)</h4>
+      <p>Apagar do orbital 2 e criar no orbital 0 combina as cadeias e gera um par de Pauli Strings:</p>
+    </div>
+    <div class="hopping-result">
+      ½ (<span class="highlight-x">X</span><sub>0</sub><span class="highlight-z">Z</span><sub>1</sub><span class="highlight-x">X</span><sub>2</sub> + <span class="highlight-y">Y</span><sub>0</sub><span class="highlight-z">Z</span><sub>1</sub><span class="highlight-y">Y</span><sub>2</sub>)
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
