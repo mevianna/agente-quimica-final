@@ -1,12 +1,13 @@
 # Quantum Chemistry Agent
 
-Agente de linha de comando que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. A primeira versão não tem interface gráfica: ela mantém o contexto da conversa, usa um modelo LLM e disponibiliza ferramentas para consultar mapeamentos fermiônico→qubit e construir Hamiltonianos moleculares.
+Assistente educacional que conversa em linguagem natural e usa as rotinas de química quântica implementadas no projeto Ket. Resultados de cálculo são produzidos pelas ferramentas locais, separados da resposta textual da LLM e identificados na interface pelo selo **Calculado com Ket**.
 
 ## Estrutura
 
 - `src/quantum_chem_agent/`: agente, memória da conversa e ferramentas científicas.
 - `ket/`: cópia do projeto Ket usada como biblioteca local. Seu código mantém a licença Apache-2.0 e os créditos originais.
 - `tests/`: testes do agente.
+- `web/`: chat web e API local, com proveniência dos cálculos e exemplos de código Ket.
 
 ## Requisitos
 
@@ -49,7 +50,17 @@ python -m quantum_chem_agent
 
 Digite `sair` para encerrar. O agente mantém as mensagens anteriores durante a sessão.
 
+Para usar o chat web:
+
+```powershell
+python web/server.py
+```
+
+Acesse `http://127.0.0.1:8000`. Em resultados de criação, aniquilação e mapeamentos Jordan–Wigner, Bravyi–Kitaev ou Parity, abra **Aprenda a encontrar este resultado no Ket** para ver o passo a passo e o código reproduzível. O controle não aparece em respostas meramente conceituais.
+
 Para usar Ollama, ajuste `.env` para `LLM_BACKEND=ollama`, instale o Ollama e execute `ollama pull qwen3:4b`. Para OpenAI, ajuste para `LLM_BACKEND=openai` e preencha `OPENAI_API_KEY`.
+
+Em máquinas sem GPU compatível, o `qwen3:4b` pode responder lentamente porque roda integralmente na CPU. Os cálculos de criação, aniquilação e mapeamento reconhecidos são enviados diretamente ao Ket e não aguardam o Ollama. Para respostas conceituais mais rápidas, use `LLM_BACKEND=gemini` com a chave já configurada.
 
 ## PySCF no WSL2
 

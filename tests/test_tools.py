@@ -21,5 +21,17 @@ def test_explicit_jordan_wigner_creation_tool():
     result = jordan_wigner_creation(3)
     assert result["calculation_status"] == "completed"
     assert result["calculation_engine"] == "local Ket library"
+    assert result["calculation_provider"] == "Ket"
+    assert result["calculation_badge"] == "Calculado com Ket"
     assert result["qubits_required"] == 4
     assert len(result["pauli_terms"]) == 2
+
+
+def test_mapping_includes_ket_learning_material():
+    result = mapping_example(2, "-", "bravyi_kitaev")
+    lesson = result["education"]
+    assert lesson["available"] is True
+    assert lesson["title"] == "Aprenda a encontrar este resultado no Ket"
+    assert len(lesson["steps"]) == 4
+    assert "AnnihilateFermion(2)" in lesson["code"]
+    assert "bravyi_kitaev(operator, qubits)" in lesson["code"]
