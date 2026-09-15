@@ -1,7 +1,5 @@
 """Conversation loop using the OpenAI Responses API and local chemistry tools."""
 
-from __future__ import annotations
-
 import os
 import json
 import re
@@ -13,7 +11,9 @@ from .tools import TOOL_DEFINITIONS, call_tool, mapping_example, molecular_hamil
 SYSTEM_PROMPT = """Você é um assistente didático de química quântica. Responda em português,
 de forma clara e cientificamente cuidadosa. Para resultados numéricos ou mapeamentos,
 é obrigatório chamar uma ferramenta Ket disponível; nunca calcule ou infira o resultado
-apenas no texto. Perguntas conceituais podem ser respondidas normalmente. Explique quando um cálculo
+apenas no texto. Ao comparar mapeamentos, use o contexto da conversa para resolver referências
+como 'o mesmo orbital' e chame a ferramenta Ket para o novo mapeamento antes de comparar.
+Perguntas conceituais podem ser respondidas normalmente. Explique quando um cálculo
 molecular requer PySCF/WSL2. Quando uma ferramenta retornar calculation_status='completed',
 afirme que o resultado foi calculado pela biblioteca local Ket. Nunca alegue erro de uma
 ferramenta, inconsistência ou fallback analítico se a ferramenta não retornar um campo error."""
@@ -90,6 +90,7 @@ class QuantumChemAgent:
         self.backend = os.getenv("LLM_BACKEND", "gemini").lower()
         self.history: list[dict[str, Any]] = []
         self._current_calculations: list[dict[str, Any]] = []
+        self._pending_gemini_context: list[dict[str, Any]] = []
         if self.backend == "gemini":
             self._init_gemini()
         elif self.backend == "ollama":
@@ -175,11 +176,22 @@ class QuantumChemAgent:
 
     def _reply_gemini(self, user_text: str) -> str:
         """Use Gemini with automatic execution of the local chemistry functions."""
+        pending_context = getattr(self, "_pending_gemini_context", [])
+        message = user_text
+        if pending_context:
+            context = json.dumps(pending_context[-4:], ensure_ascii=False)
+            message = (
+                "Contexto confiável de interações anteriores, incluindo resultados realmente "
+                f"calculados pelo Ket:\n{context}\n\nNova mensagem do usuário:\n{user_text}"
+            )
         try:
-            response = self.chat.send_message(user_text)
+            response = self.chat.send_message(message)
         except Exception as exc:
             raise RuntimeError(f"Não foi possível consultar Gemini. Verifique a chave e a conexão. Detalhe: {exc}") from exc
+        pending_context.clear()
         answer = response.text
+        self.history.append({"role": "user", "content": user_text})
+        self.history.append({"role": "assistant", "content": answer})
         return answer
 
     def _reply_ollama(self, user_text: str) -> str:
@@ -235,12 +247,48 @@ class QuantumChemAgent:
         self._record_result(result)
         return serialized
 
+    def remember_direct_exchange(self, user_text: str, result: dict[str, Any]) -> None:
+        """Preserve a deterministic Ket exchange as conversational context."""
+        answer = result["answer"]
+        calculations = []
+        for calculation in result.get("calculations", []):
+            calculations.append(
+                {
+                    key: calculation[key]
+                    for key in (
+                        "calculation_type",
+                        "input",
+                        "action",
+                        "mapping",
+                        "mapping_label",
+                        "qubits_required",
+                        "pauli_terms",
+                    )
+                    if key in calculation
+                }
+            )
+        self.history.append({"role": "user", "content": user_text})
+        self.history.append({"role": "assistant", "content": answer})
+        pending_context = getattr(self, "_pending_gemini_context", None)
+        if pending_context is None:
+            pending_context = []
+            self._pending_gemini_context = pending_context
+        pending_context.append(
+            {
+                "user_request": user_text,
+                "ket_calculations": calculations,
+                "assistant_answer": answer,
+            }
+        )
+        del pending_context[:-4]
+
     def reply_result(self, user_text: str) -> dict[str, Any]:
         """Return answer text plus provenance for calculations actually run in this turn."""
         self._current_calculations = []
         direct_result = direct_mapping_result(user_text)
         if direct_result is not None:
             self._current_calculations.extend(direct_result["calculations"])
+            self.remember_direct_exchange(user_text, direct_result)
             return direct_result
         if self.backend == "gemini":
             answer = self._reply_gemini(user_text)

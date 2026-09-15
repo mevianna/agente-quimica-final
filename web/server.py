@@ -29,15 +29,20 @@ class ChatService:
 
     def __init__(self) -> None:
         self._agent: QuantumChemAgent | None = None
+        self._pending_direct_exchanges: list[tuple[str, dict[str, Any]]] = []
         self._lock = threading.Lock()
 
     def reply(self, message: str) -> dict[str, Any]:
-        direct_result = direct_mapping_result(message)
-        if direct_result is not None:
-            return direct_result
         with self._lock:
             if self._agent is None:
+                direct_result = direct_mapping_result(message)
+                if direct_result is not None:
+                    self._pending_direct_exchanges.append((message, direct_result))
+                    return direct_result
                 self._agent = QuantumChemAgent()
+                for previous_message, previous_result in self._pending_direct_exchanges:
+                    self._agent.remember_direct_exchange(previous_message, previous_result)
+                self._pending_direct_exchanges.clear()
             return self._agent.reply_result(message)
 
 
