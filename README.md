@@ -115,17 +115,6 @@ ket/src/ket/clib/libs/
 
 Se esses dois arquivos estiverem presentes na cópia recebida, nenhuma instalação adicional do Ket é necessária. Se estiverem ausentes, a interface e as respostas conceituais da LLM ainda poderão funcionar, mas os cálculos marcados como **Calculado com Ket** não funcionarão. A versão atual do projeto usa uma edição do Ket com recursos de química que não devem ser substituídos automaticamente pela versão comum do `ket-lang`.
 
-## Como testar na apresentação
-
-Depois de abrir a interface web, experimente esta sequência:
-
-```text
-O que é o mapeamento Jordan-Wigner?
-Mapeie o operador de criação no orbital 1 com Jordan-Wigner.
-Agora compare com Bravyi-Kitaev no mesmo orbital.
-```
-
-Ela demonstra resposta gerada pela LLM, execução de ferramenta e manutenção do contexto da conversa.
 
 ## Solução de problemas
 
