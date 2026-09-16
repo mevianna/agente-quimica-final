@@ -16,7 +16,7 @@ if str(SRC_DIR) not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 
-from quantum_chem_agent.agent import QuantumChemAgent, direct_mapping_result  # noqa: E402
+from quantum_chem_agent.agent import QuantumChemAgent, direct_calculation_result  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -35,7 +35,7 @@ class ChatService:
     def reply(self, message: str) -> dict[str, Any]:
         with self._lock:
             if self._agent is None:
-                direct_result = direct_mapping_result(message)
+                direct_result = direct_calculation_result(message)
                 if direct_result is not None:
                     self._pending_direct_exchanges.append((message, direct_result))
                     return direct_result

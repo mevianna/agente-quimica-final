@@ -6,13 +6,15 @@ import re
 import unicodedata
 from typing import Any
 
-from .tools import TOOL_DEFINITIONS, call_tool, mapping_example, molecular_hamiltonian
+from .tools import TOOL_DEFINITIONS, call_tool, fermion_algebra, mapping_example, molecular_hamiltonian
 
 SYSTEM_PROMPT = """Você é um assistente didático de química quântica. Responda em português,
 de forma clara e cientificamente cuidadosa. Para resultados numéricos ou mapeamentos,
 é obrigatório chamar uma ferramenta Ket disponível; nunca calcule ou infira o resultado
 apenas no texto. Ao comparar mapeamentos, use o contexto da conversa para resolver referências
 como 'o mesmo orbital' e chame a ferramenta Ket para o novo mapeamento antes de comparar.
+Para construir produtos fermiônicos, calcular adjuntos, colocar operadores em ordem normal
+ou verificar conservação de partículas e spin, é obrigatório chamar fermion_algebra.
 Perguntas conceituais podem ser respondidas normalmente. Explique quando um cálculo
 molecular requer PySCF/WSL2. Quando uma ferramenta retornar calculation_status='completed',
 afirme que o resultado foi calculado pela biblioteca local Ket. Nunca alegue erro de uma
@@ -27,13 +29,86 @@ def _plain_text(text: str) -> str:
     )
 
 
+_FERMION_ACTIONS = re.compile(
+    r"\b(criacao|criar|crie|criador|creation|create|createfermion|"
+    r"aniquilacao|aniquilar|aniquile|aniquilador|destruicao|destruir|destrua|"
+    r"annihilation|annihilate|annihilatefermion)\b"
+)
+_CREATION_WORDS = {"criacao", "criar", "crie", "criador", "creation", "create", "createfermion"}
+
+
+def _parse_fermion_factors(user_text: str) -> list[dict[str, Any]]:
+    """Extract explicit natural-language factors while preserving their order."""
+    text = _plain_text(user_text)
+    matches = list(_FERMION_ACTIONS.finditer(text))
+    factors = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        segment = text[match.start():end]
+        orbital = re.search(r"\b(?:orbital|modo|indice)\s*(?:numero\s*)?[:#-]?\s*(\d+)\b", segment)
+        if orbital is None:
+            return []
+        spin_match = re.search(r"\b(?:spin\s*)?(alfa|alpha|beta)\b", segment)
+        spin = None
+        if spin_match is not None:
+            spin = "b" if spin_match.group(1) == "beta" else "a"
+        factors.append(
+            {
+                "orbital": int(orbital.group(1)),
+                "action": "+" if match.group(1) in _CREATION_WORDS else "-",
+                "spin": spin,
+            }
+        )
+    return factors
+
+
+def parse_fermion_request(user_text: str) -> dict[str, Any] | None:
+    """Recognize explicit Ket algebra requests that can bypass the LLM."""
+    text = _plain_text(user_text)
+    factors = _parse_fermion_factors(user_text)
+    if not factors:
+        return None
+
+    if re.search(r"\b(ordem normal|ordenamento normal|normal order(?:ed)?)\b", text):
+        operation = "normal_order"
+    elif re.search(r"\b(adjunto|dagger|conjugado hermitiano|hermitiano conjugado)\b", text) or "†" in user_text:
+        operation = "adjoint"
+    elif re.search(r"\b(conserva|conservar|conservacao|verifique a conservacao)\b", text):
+        operation = "conservation"
+    elif len(factors) >= 2 and re.search(
+        r"\b(produto|construa|construir|monte|montar|multiplique|vezes|seguida|seguido)\b", text
+    ):
+        operation = "product"
+    else:
+        return None
+
+    request: dict[str, Any] = {
+        "orbitals": [factor["orbital"] for factor in factors],
+        "actions": [factor["action"] for factor in factors],
+        "operation": operation,
+    }
+    if any(factor["spin"] is not None for factor in factors):
+        request["spins"] = [
+            factor["spin"] if factor["spin"] is not None else ("a" if factor["orbital"] % 2 == 0 else "b")
+            for factor in factors
+        ]
+    return request
+
+
 def parse_mapping_request(user_text: str) -> dict[str, Any] | None:
     """Recognize unambiguous mapping requests that can bypass the LLM."""
     text = _plain_text(user_text)
     creation = re.search(r"\b(criacao|criar|creation)\b", text)
     annihilation = re.search(r"\b(aniquilacao|aniquilar|annihilation)\b", text)
     orbital = re.search(r"\b(?:orbital|modo|indice)\s*(?:numero\s*)?[:#-]?\s*(\d+)\b", text)
-    if (creation is None) == (annihilation is None) or orbital is None:
+    action_mentions = re.findall(r"\b(criacao|criar|creation|aniquilacao|aniquilar|annihilation)\b", text)
+    orbital_mentions = re.findall(r"\b(?:orbital|modo|indice)\s*(?:numero\s*)?[:#-]?\s*\d+\b", text)
+    if (
+        (creation is None) == (annihilation is None)
+        or orbital is None
+        or len(action_mentions) != 1
+        or len(orbital_mentions) != 1
+    ):
         return None
 
     if re.search(r"\b(bravyi(?:[- ]kitaev)?|bk)\b", text):
@@ -83,6 +158,63 @@ def direct_mapping_result(user_text: str) -> dict[str, Any] | None:
     return {"answer": _mapping_answer(result), "calculations": [result]}
 
 
+def _format_fermion_terms(terms: list[dict[str, Any]]) -> str:
+    if not terms:
+        return "0"
+    formatted = [
+        f"{_format_coefficient(term['coefficient'])} · {term['notation']}"
+        for term in terms
+    ]
+    return " + ".join(formatted).replace("+ -", "− ")
+
+
+def _fermion_answer(result: dict[str, Any]) -> str:
+    operation = result["operation"]
+    input_notation = result["input_term"]["notation"]
+    if operation == "product":
+        return (
+            f"O Ket construiu o produto fermiônico, preservando a ordem dos fatores:\n\n"
+            f"{_format_fermion_terms(result['result_terms'])}\n\n"
+            "Abra o modo de aprendizagem abaixo para reproduzir a construção em código."
+        )
+    if operation == "adjoint":
+        return (
+            f"O Ket calculou o adjunto de {input_notation}:\n\n"
+            f"{_format_fermion_terms(result['result_terms'])}\n\n"
+            "Abra o modo de aprendizagem abaixo para ver a operação em código."
+        )
+    if operation == "normal_order":
+        return (
+            f"O Ket colocou {input_notation} em ordem normal aplicando as relações de anticomutação:\n\n"
+            f"{_format_fermion_terms(result['result_terms'])}\n\n"
+            "Abra o modo de aprendizagem abaixo para reproduzir o cálculo em código."
+        )
+    particle = "sim" if result["conserves_particle_number"] else "não"
+    spin = "sim" if result["conserves_spin_z"] else "não"
+    two_body = "sim" if result["is_two_body_number_conserving"] else "não"
+    return (
+        f"O Ket analisou o produto {input_notation}:\n\n"
+        f"• Conserva o número de partículas: {particle}.\n"
+        f"• Conserva a componente z do spin: {spin}.\n"
+        f"• É de no máximo dois corpos e conserva partículas: {two_body}.\n\n"
+        "Abra o modo de aprendizagem abaixo para ver as verificações executadas."
+    )
+
+
+def direct_fermion_result(user_text: str) -> dict[str, Any] | None:
+    """Execute a clear fermionic algebra request with Ket, without initializing an LLM."""
+    request = parse_fermion_request(user_text)
+    if request is None:
+        return None
+    result = fermion_algebra(**request)
+    return {"answer": _fermion_answer(result), "calculations": [result]}
+
+
+def direct_calculation_result(user_text: str) -> dict[str, Any] | None:
+    """Try every deterministic request understood without an LLM."""
+    return direct_fermion_result(user_text) or direct_mapping_result(user_text)
+
+
 class QuantumChemAgent:
     """A small stateful agent: messages persist for the lifetime of this object."""
 
@@ -123,8 +255,17 @@ class QuantumChemAgent:
             """Calcula e mapeia um Hamiltoniano molecular usando Ket (requer PySCF)."""
             return self._record_result(molecular_hamiltonian(symbols, coordinates, basis, mapping))
 
+        def ket_fermion_algebra(
+            orbitals: list[int],
+            actions: list[str],
+            operation: str,
+            spins: list[str] | None = None,
+        ) -> dict[str, Any]:
+            """Executa produto, adjunto, ordem normal ou conservação fermiônica usando Ket."""
+            return self._record_result(fermion_algebra(orbitals, actions, operation, spins))
+
         # Keep closures alive for the lifetime of the Gemini chat.
-        self._gemini_tools = [ket_mapping_example, ket_molecular_hamiltonian]
+        self._gemini_tools = [ket_mapping_example, ket_fermion_algebra, ket_molecular_hamiltonian]
         self.chat = self.client.chats.create(
             model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             config=types.GenerateContentConfig(
@@ -204,7 +345,7 @@ class QuantumChemAgent:
             response = self.client.chat(
                 model=model,
                 messages=messages,
-                tools=[mapping_example, molecular_hamiltonian],
+                tools=[mapping_example, fermion_algebra, molecular_hamiltonian],
                 think=False,
                 keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "15m"),
                 options={
@@ -225,7 +366,7 @@ class QuantumChemAgent:
             response = self.client.chat(
                 model=model,
                 messages=messages,
-                tools=[mapping_example, molecular_hamiltonian],
+                tools=[mapping_example, fermion_algebra, molecular_hamiltonian],
                 think=False,
                 keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "15m"),
                 options={"temperature": 0.2, "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "500"))},
@@ -258,11 +399,20 @@ class QuantumChemAgent:
                     for key in (
                         "calculation_type",
                         "input",
+                        "input_term",
                         "action",
+                        "actions",
+                        "operation",
+                        "orbitals",
+                        "spins",
                         "mapping",
                         "mapping_label",
                         "qubits_required",
                         "pauli_terms",
+                        "result_terms",
+                        "conserves_particle_number",
+                        "conserves_spin_z",
+                        "is_two_body_number_conserving",
                     )
                     if key in calculation
                 }
@@ -285,7 +435,7 @@ class QuantumChemAgent:
     def reply_result(self, user_text: str) -> dict[str, Any]:
         """Return answer text plus provenance for calculations actually run in this turn."""
         self._current_calculations = []
-        direct_result = direct_mapping_result(user_text)
+        direct_result = direct_calculation_result(user_text)
         if direct_result is not None:
             self._current_calculations.extend(direct_result["calculations"])
             self.remember_direct_exchange(user_text, direct_result)

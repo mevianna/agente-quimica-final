@@ -2,7 +2,13 @@
 
 import inspect
 
-from quantum_chem_agent.agent import QuantumChemAgent, direct_mapping_result, parse_mapping_request
+from quantum_chem_agent.agent import (
+    QuantumChemAgent,
+    direct_fermion_result,
+    direct_mapping_result,
+    parse_fermion_request,
+    parse_mapping_request,
+)
 from quantum_chem_agent.tools import mapping_example
 
 
@@ -53,6 +59,34 @@ def test_conceptual_mapping_question_does_not_bypass_llm():
     assert parse_mapping_request("Explique o mapeamento Jordan-Wigner") is None
 
 
+def test_parse_fermion_product_without_dagger_symbol():
+    assert parse_fermion_request(
+        "Construa o produto: criação no orbital 0 seguida de aniquilação no orbital 1"
+    ) == {
+        "orbitals": [0, 1],
+        "actions": ["+", "-"],
+        "operation": "product",
+    }
+
+
+def test_parse_fermion_operations_in_natural_portuguese():
+    assert parse_fermion_request(
+        "Calcule o adjunto da criação no orbital 0 seguida de aniquilação no orbital 1"
+    )["operation"] == "adjoint"
+    assert parse_fermion_request(
+        "Coloque em ordem normal a aniquilação no orbital 0 seguida de criação no orbital 0"
+    )["operation"] == "normal_order"
+    assert parse_fermion_request(
+        "Verifique se criação no orbital 0 e aniquilação no orbital 2 conserva partículas e spin"
+    )["operation"] == "conservation"
+
+
+def test_multiple_creation_product_does_not_become_single_mapping():
+    assert parse_mapping_request(
+        "Mapeie criação no orbital 0 e criação no orbital 1"
+    ) is None
+
+
 def test_direct_mapping_request_skips_llm():
     agent = QuantumChemAgent.__new__(QuantumChemAgent)
     agent.backend = "openai"
@@ -66,6 +100,32 @@ def test_direct_mapping_request_skips_llm():
     assert result["calculations"][0]["mapping"] == "jordan_wigner"
     assert agent.history[0]["content"] == "Calcule a criação no orbital 1 com Jordan-Wigner"
     assert agent._pending_gemini_context[0]["ket_calculations"][0]["input"] == "a_1†"
+
+
+def test_direct_fermion_request_skips_llm():
+    agent = QuantumChemAgent.__new__(QuantumChemAgent)
+    agent.backend = "openai"
+    agent.history = []
+    agent._current_calculations = []
+    agent._reply_openai = lambda _question: (_ for _ in ()).throw(AssertionError("LLM não deveria ser chamada"))
+
+    result = agent.reply_result(
+        "Coloque em ordem normal a aniquilação no orbital 0 seguida de criação no orbital 0"
+    )
+
+    assert "O Ket colocou" in result["answer"]
+    assert result["calculations"][0]["calculation_type"] == "fermion_normal_order"
+    assert result["calculations"][0]["calculation_provider"] == "Ket"
+
+
+def test_direct_conservation_result_reports_both_checks():
+    result = direct_fermion_result(
+        "Verifique se criação no orbital 0 e aniquilação no orbital 1 conserva partículas e spin"
+    )
+
+    assert result is not None
+    assert "Conserva o número de partículas: sim" in result["answer"]
+    assert "Conserva a componente z do spin: não" in result["answer"]
 
 
 def test_direct_mapping_result_is_ready_without_an_agent():

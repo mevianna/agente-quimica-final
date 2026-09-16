@@ -99,6 +99,20 @@
       .response-stack { display: grid; gap: 9px; min-width: 0; }
       .bubble { padding: 11px 15px; border-radius: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
       .assistant .bubble { background: var(--soft); border-bottom-left-radius: 5px; }
+      .assistant .bubble.formatted { white-space: normal; }
+      .formatted p { margin: 0; white-space: pre-wrap; }
+      .formatted p + p { margin-top: 10px; }
+      .formatted .message-heading { margin: 0 0 8px; font-weight: 750; }
+      .formatted .math-display {
+        margin: 10px 0;
+        padding: 8px 12px;
+        overflow-x: auto;
+        font-family: Cambria Math, STIX Two Math, Georgia, serif;
+        font-size: 1.12em;
+        text-align: center;
+        white-space: pre-wrap;
+      }
+      .formatted hr { margin: 12px 0; border: 0; border-top: 1px solid #c8d9d3; }
       .user .bubble { background: var(--user); color: white; border-bottom-right-radius: 5px; }
       .typing { color: var(--muted); font-style: italic; }
 
@@ -230,7 +244,13 @@
       const messages = document.querySelector('#messages');
       let waiting = false;
 
-      const supportedMappings = new Set(['jordan_wigner', 'bravyi_kitaev', 'parity']);
+      const supportedLessons = new Set([
+        'fermion_mapping',
+        'fermion_product',
+        'fermion_adjoint',
+        'fermion_normal_order',
+        'fermion_conservation',
+      ]);
 
       function addKetProof(container, calculation) {
         if (calculation.calculation_status !== 'completed' || calculation.calculation_provider !== 'Ket') return;
@@ -243,8 +263,7 @@
         proof.appendChild(badge);
 
         const lesson = calculation.education;
-        const canTeach = calculation.calculation_type === 'fermion_mapping'
-          && supportedMappings.has(calculation.mapping)
+        const canTeach = supportedLessons.has(calculation.calculation_type)
           && lesson?.available === true;
         if (canTeach) {
           const details = document.createElement('details');
@@ -269,6 +288,87 @@
         container.appendChild(proof);
       }
 
+      function readableMath(source) {
+        const subscripts = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉' };
+        return source
+          .replace(/\^\{\\phantom\{\\dagger\}\}/g, '')
+          .replace(/\^(?:\{\\dagger\}|\\dagger)/g, '†')
+          .replace(/_(?:\{(\d+)\}|(\d+))/g, (_match, braced, plain) =>
+            (braced || plain).split('').map((digit) => subscripts[digit]).join(''))
+          .replace(/\\(?:,|;|!|quad|qquad)/g, ' ')
+          .replace(/\\cdot/g, '·')
+          .replace(/\\otimes/g, '⊗')
+          .replace(/\\left|\\right/g, '')
+          .trim();
+      }
+
+      function plainMarkdown(source) {
+        return source
+          .replace(/\$([^$\n]+)\$/g, (_match, expression) => readableMath(expression))
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/__(.*?)__/g, '$1')
+          .replace(/\`([^\`]+)\`/g, '$1');
+      }
+
+      function renderAssistantText(container, source) {
+        container.classList.add('formatted');
+        const lines = source.replace(/\r\n?/g, '\n').split('\n');
+        let paragraph = [];
+        let math = [];
+        let inMath = false;
+
+        const flushParagraph = () => {
+          if (!paragraph.length) return;
+          const element = document.createElement('p');
+          element.textContent = plainMarkdown(paragraph.join('\n'));
+          container.appendChild(element);
+          paragraph = [];
+        };
+
+        const flushMath = () => {
+          const element = document.createElement('div');
+          element.className = 'math-display';
+          element.textContent = readableMath(math.join(' '));
+          container.appendChild(element);
+          math = [];
+        };
+
+        lines.forEach((line) => {
+          const trimmed = line.trim();
+          if (trimmed === '$$') {
+            if (inMath) flushMath();
+            else flushParagraph();
+            inMath = !inMath;
+            return;
+          }
+          if (inMath) {
+            math.push(trimmed);
+            return;
+          }
+          if (/^---+$/.test(trimmed)) {
+            flushParagraph();
+            container.appendChild(document.createElement('hr'));
+            return;
+          }
+          const heading = trimmed.match(/^#{1,6}\s+(.+)$/);
+          if (heading) {
+            flushParagraph();
+            const element = document.createElement('div');
+            element.className = 'message-heading';
+            element.textContent = plainMarkdown(heading[1]);
+            container.appendChild(element);
+            return;
+          }
+          if (!trimmed) {
+            flushParagraph();
+            return;
+          }
+          paragraph.push(line);
+        });
+        if (inMath && math.length) flushMath();
+        flushParagraph();
+      }
+
       function addMessage(role, text, extraClass = '', calculations = []) {
         const article = document.createElement('article');
         article.className = `message ${role} ${extraClass}`;
@@ -276,7 +376,8 @@
         stack.className = 'response-stack';
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
-        bubble.textContent = text;
+        if (role === 'assistant' && !extraClass.includes('typing')) renderAssistantText(bubble, text);
+        else bubble.textContent = text;
         stack.appendChild(bubble);
         calculations.forEach((calculation) => addKetProof(stack, calculation));
         article.appendChild(stack);

@@ -29,6 +29,37 @@ def _serialize_hamiltonian(hamiltonian: Any) -> list[dict[str, Any]]:
     return terms
 
 
+def _serialize_fermion(term: Any) -> dict[str, Any]:
+    """Serialize one ordered Ket fermionic product without relying on display text."""
+    operators = [
+        {
+            "orbital": operator.orbital,
+            "spin": operator.spin,
+            "action": "creation" if operator.action == "+" else "annihilation",
+            "symbol": operator.action,
+        }
+        for operator in term.operators
+    ]
+    notation = " ".join(
+        f"a_{operator.orbital}{'†' if operator.action == '+' else ''}" for operator in term.operators
+    ) or "I"
+    return {"notation": notation, "operators": operators}
+
+
+def _serialize_fermion_sentence(sentence: Any) -> list[dict[str, Any]]:
+    """Serialize a Ket FermionSentence, including identity and complex coefficients."""
+    terms = []
+    for term, raw_coefficient in sentence.items():
+        coefficient = complex(raw_coefficient)
+        terms.append(
+            {
+                "coefficient": {"real": coefficient.real, "imag": coefficient.imag},
+                **_serialize_fermion(term),
+            }
+        )
+    return terms
+
+
 MAPPING_LABELS = {
     "jordan_wigner": "Jordan–Wigner",
     "parity": "Parity",
@@ -64,6 +95,122 @@ def _mapping_lesson(orbital: int, action: str, mapping: str) -> dict[str, Any]:
             ]
         ),
     }
+
+
+def _fermion_lesson(orbitals: list[int], actions: list[str], spins: list[str], operation: str) -> dict[str, Any]:
+    """Build deterministic learning material for an operation performed by fermion.py."""
+    constructors = ["CreateFermion" if action == "+" else "AnnihilateFermion" for action in actions]
+    factor_lines = [
+        f"    {constructor}({orbital}, spin={spin!r}),"
+        for constructor, orbital, spin in zip(constructors, orbitals, spins)
+    ]
+    code = [
+        "from ket.chem import AnnihilateFermion, CreateFermion, FermionSentence",
+        "",
+        "factors = [",
+        *factor_lines,
+        "]",
+        "operator = factors[0]",
+        "for factor in factors[1:]:",
+        "    operator = operator * factor",
+    ]
+    steps = [
+        "Crie cada operador de criação ou aniquilação com seu orbital e spin.",
+        "Multiplique os fatores na mesma ordem em que aparecem no pedido.",
+    ]
+    if operation == "adjoint":
+        code.extend(["", "result = operator.adjoint()", "print(result)"])
+        steps.append("Chame adjoint(); o Ket inverte a ordem e troca criação por aniquilação, e vice-versa.")
+    elif operation == "normal_order":
+        code.extend(["", "result = operator.normal_ordered()", "print(result)"])
+        steps.append("Chame normal_ordered(); o Ket aplica as relações de anticomutação e simplifica o resultado.")
+    elif operation == "conservation":
+        code.extend(
+            [
+                "",
+                "sentence = FermionSentence({operator: 1})",
+                "print(sentence.conserves_particle_number())",
+                "print(sentence.conserves_spin_z())",
+            ]
+        )
+        steps.append("Promova o produto a FermionSentence e consulte as verificações de conservação do Ket.")
+    else:
+        code.extend(["", "result = operator", "print(result)"])
+        steps.append("Consulte o produto construído pelo Ket, preservando a ordem dos fatores.")
+    return {
+        "available": True,
+        "title": "Aprenda a encontrar este resultado no Ket",
+        "steps": steps,
+        "code": "\n".join(code),
+    }
+
+
+def fermion_algebra(
+    orbitals: list[int],
+    actions: list[str],
+    operation: str = "product",
+    spins: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run fermionic product, adjoint, normal ordering, or conservation checks with Ket.
+
+    Args:
+        orbitals: Ordered zero-based orbital indices.
+        actions: Ordered actions, using '+' for creation and '-' for annihilation.
+        operation: One of product, adjoint, normal_order, or conservation.
+        spins: Optional ordered spin labels ('a' or 'b'); Ket infers them when omitted.
+    """
+    if not orbitals or len(orbitals) != len(actions):
+        raise ValueError("orbitals and actions must be non-empty lists of the same length")
+    if any(not isinstance(orbital, int) or isinstance(orbital, bool) or orbital < 0 for orbital in orbitals):
+        raise ValueError("all orbitals must be non-negative integers")
+    if any(action not in {"+", "-"} for action in actions):
+        raise ValueError("all actions must be '+' (creation) or '-' (annihilation)")
+    operations = {"product", "adjoint", "normal_order", "conservation"}
+    if operation not in operations:
+        raise ValueError(f"operation must be one of: {', '.join(sorted(operations))}")
+    if spins is not None and len(spins) != len(orbitals):
+        raise ValueError("spins must have the same length as orbitals")
+    if spins is not None and any(spin not in {"a", "b"} for spin in spins):
+        raise ValueError("all spins must be 'a' (alpha) or 'b' (beta)")
+
+    _enable_local_ket()
+    from ket.chem import AnnihilateFermion, CreateFermion, FermionSentence  # pylint: disable=import-outside-toplevel
+
+    factors = []
+    for index, (orbital, action) in enumerate(zip(orbitals, actions)):
+        spin = None if spins is None else spins[index]
+        constructor = CreateFermion if action == "+" else AnnihilateFermion
+        factors.append(constructor(orbital, spin=spin))
+    operator = factors[0]
+    for factor in factors[1:]:
+        operator = operator * factor
+
+    resolved_spins = [factor.operators[0].spin for factor in factors]
+    result: dict[str, Any] = {
+        "calculation_status": "completed",
+        "calculation_engine": "local Ket library",
+        "calculation_provider": "Ket",
+        "calculation_badge": "Calculado com Ket",
+        "calculation_type": f"fermion_{operation}",
+        "operation": operation,
+        "orbitals": list(orbitals),
+        "actions": list(actions),
+        "spins": resolved_spins,
+        "input_term": _serialize_fermion(operator),
+        "education": _fermion_lesson(orbitals, actions, resolved_spins, operation),
+    }
+    sentence = FermionSentence({operator: 1})
+    if operation == "product":
+        result["result_terms"] = _serialize_fermion_sentence(sentence)
+    elif operation == "adjoint":
+        result["result_terms"] = _serialize_fermion_sentence(FermionSentence({operator.adjoint(): 1}))
+    elif operation == "normal_order":
+        result["result_terms"] = _serialize_fermion_sentence(operator.normal_ordered())
+    else:
+        result["conserves_particle_number"] = sentence.conserves_particle_number()
+        result["conserves_spin_z"] = sentence.conserves_spin_z()
+        result["is_two_body_number_conserving"] = sentence.is_two_body_number_conserving()
+    return result
 
 
 def mapping_example(orbital: int, action: str, mapping: str = "jordan_wigner") -> dict[str, Any]:
@@ -190,6 +337,37 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "name": "fermion_algebra",
+        "description": "Usa a biblioteca Ket para construir produtos fermiônicos, calcular adjuntos, colocar em ordem normal ou verificar conservação de partículas e spin. Use em vez de calcular essas operações no texto.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "orbitals": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Orbitais na ordem dos fatores, começando em zero.",
+                },
+                "actions": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["+", "-"]},
+                    "description": "Uma ação por orbital: + para criação e - para aniquilação.",
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": ["product", "adjoint", "normal_order", "conservation"],
+                },
+                "spins": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["a", "b"]},
+                    "description": "Opcional: spin a (alfa) ou b (beta) para cada fator.",
+                },
+            },
+            "required": ["orbitals", "actions", "operation"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
         "name": "molecular_hamiltonian",
         "description": "Gera Hamiltoniano molecular usando PySCF e o mapeia para qubits. Requer PySCF no WSL2/Linux.",
         "parameters": {
@@ -210,7 +388,11 @@ TOOL_DEFINITIONS = [
 def call_tool(name: str, arguments: str) -> str:
     """Execute a model-requested tool and return a JSON result, including errors."""
     try:
-        functions = {"mapping_example": mapping_example, "molecular_hamiltonian": molecular_hamiltonian}
+        functions = {
+            "mapping_example": mapping_example,
+            "fermion_algebra": fermion_algebra,
+            "molecular_hamiltonian": molecular_hamiltonian,
+        }
         if name not in functions:
             raise ValueError(f"Unknown tool: {name}")
         return json.dumps(functions[name](**json.loads(arguments)), ensure_ascii=False)

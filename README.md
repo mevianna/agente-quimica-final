@@ -115,7 +115,6 @@ ket/src/ket/clib/libs/
 
 Se esses dois arquivos estiverem presentes na cópia recebida, nenhuma instalação adicional do Ket é necessária. Se estiverem ausentes, a interface e as respostas conceituais da LLM ainda poderão funcionar, mas os cálculos marcados como **Calculado com Ket** não funcionarão. A versão atual do projeto usa uma edição do Ket com recursos de química que não devem ser substituídos automaticamente pela versão comum do `ket-lang`.
 
-
 ## Solução de problemas
 
 ### O comando `py` não foi encontrado
