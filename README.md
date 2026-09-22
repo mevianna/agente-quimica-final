@@ -148,7 +148,7 @@ Faça dois testes:
 1. `Mapeie o operador de criação no orbital 1 usando Jordan-Wigner.`
    Deve aparecer o selo **Calculado com Ket**.
 2. `Explique de forma simples o que é um qubit.`
-   Essa pergunta verifica a conexão com o Gemini.
+   Essa pergunta verifica a capacidade de responder perguntas teóricas.
 
 Para encerrar, volte ao PowerShell e pressione `Ctrl+C`.
 
@@ -168,7 +168,7 @@ Sem as DLLs, o servidor e as respostas conceituais da LLM ainda podem funcionar,
 
 ## Perguntas executadas diretamente pelo Ket
 
-A integração deste projeto com a versão local do Ket possui rotas determinísticas para operações fermiônicas e mapeamentos. Nos exemplos abaixo, o agente reconhece a solicitação e executa o cálculo diretamente no Ket, sem depender da LLM para produzir o resultado. A interface identifica essas respostas com o selo **Calculado com Ket**.
+Quando os cálculos são realizados diretamente com a biblioteca Ket, a interface exibe o selo **Calculado com Ket**. As operações disponíveis dependem das funcionalidades já implementadas na biblioteca. A seguir, podem ser encontrados os cálculos que podem ser solicitados atualmente:
 
 ### 1. Produto de operadores
 
